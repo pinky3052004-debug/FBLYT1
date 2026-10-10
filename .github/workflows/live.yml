@@ -35,7 +35,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y xvfb ffmpeg fonts-noto-color-emoji fonts-liberation
+          sudo apt-get install -y xvfb xdotool ffmpeg fonts-noto-color-emoji fonts-liberation
           pip install requests
 
       - name: Run live slot
