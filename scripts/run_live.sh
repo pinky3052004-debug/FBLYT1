@@ -26,13 +26,19 @@ export DISPLAY=:99
 sleep 2
 
 CHROME="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
+PROFILE=/tmp/chrome-profile
+mkdir -p "$PROFILE"
+touch "$PROFILE/First Run"   # skips Chrome's first-run / Terms of Service dialog
 "$CHROME" --no-sandbox --kiosk --window-size=720,1280 --window-position=0,0 \
-  --user-data-dir=/tmp/chrome-profile --disable-infobars --noerrdialogs --disable-translate \
+  --user-data-dir="$PROFILE" --no-first-run --no-default-browser-check --disable-search-engine-choice-screen \
+  --password-store=basic --disable-component-update --disable-infobars --noerrdialogs --disable-translate \
   --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader --ignore-gpu-blocklist \
   --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling \
   --disable-renderer-backgrounding --disable-backgrounding-occluded-windows \
   "http://localhost:8080/index.html?speed=2" > chrome.log 2>&1 &
-sleep 8
+sleep 6
+# safety net: if any dialog still appeared, accept it (Enter does nothing on the game page)
+for _ in 1 2 3; do xdotool key Return 2>/dev/null || true; sleep 2; done
 
 if [ $(( SLOT % 2 )) -eq 1 ]; then OUT="$PRIMARY/$STREAM_KEY"; else OUT="$BACKUP/$STREAM_KEY"; fi
 echo "slot $SLOT -> $([ $(( SLOT % 2 )) -eq 1 ] && echo primary || echo backup) ingest"
