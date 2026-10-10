@@ -1,0 +1,46 @@
+name: Flag Battle Live
+
+on:
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: "Slot number (1 = create the broadcast)"
+        default: "1"
+      total_slots:
+        description: "How many 3h slots in a row (4 = 12 hours)"
+        default: "4"
+      state:
+        description: "Round/winners handoff JSON (set automatically)"
+        default: "{}"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    env:
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+      SLOT: ${{ inputs.slot }}
+      TOTAL: ${{ inputs.total_slots }}
+      STATE_IN: ${{ inputs.state }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y xvfb ffmpeg fonts-noto-color-emoji fonts-liberation
+          pip install requests
+
+      - name: Run live slot
+        run: bash scripts/run_live.sh
+
+      - name: Logs (on failure)
+        if: failure()
+        run: tail -n 50 server.log chrome.log xvfb.log || true
