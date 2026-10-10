@@ -1,0 +1,22 @@
+name: Download Flags (run once)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  flags:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download flag images into flags/
+        run: python3 scripts/download_flags.py
+      - name: Commit flags
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add flags
+          git commit -m "Add flag images" || echo "nothing to commit"
+          git push
