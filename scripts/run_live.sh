@@ -21,6 +21,18 @@ printf '%s' "${STATE_IN:-{\}}" > state.json
 python3 scripts/server.py > server.log 2>&1 &
 sleep 2
 
+# virtual sound card: Chrome plays into sink "game", ffmpeg records game.monitor
+AUDIO_OK=0
+if command -v pulseaudio >/dev/null 2>&1; then
+  pulseaudio --start --exit-idle-time=-1 --log-target=file:pulse.log >/dev/null 2>&1 || true
+  sleep 2
+  if pactl load-module module-null-sink sink_name=game sink_properties=device.description=game >/dev/null 2>&1; then
+    pactl set-default-sink game; AUDIO_OK=1
+  fi
+fi
+export PULSE_SINK=game
+echo "audio capture: $AUDIO_OK"
+
 Xvfb :99 -screen 0 720x1280x24 -nolisten tcp > xvfb.log 2>&1 &
 export DISPLAY=:99
 sleep 2
@@ -54,9 +66,14 @@ fi
 
 END=$(( $(date +%s) + RUN_MIN * 60 - 12 ))
 while [ "$(date +%s)" -lt "$END" ]; do
+  if [ "$AUDIO_OK" = "1" ]; then
+    AIN=(-thread_queue_size 1024 -f pulse -i game.monitor)
+  else
+    AIN=(-f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100)
+  fi
   timeout $(( END - $(date +%s) )) ffmpeg -hide_banner -loglevel warning \
-    -f x11grab -framerate "$FPS" -video_size 720x1280 -i :99 \
-    -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 \
+    -thread_queue_size 512 -f x11grab -framerate "$FPS" -video_size 720x1280 -i :99 \
+    "${AIN[@]}" -af aresample=async=1:first_pts=0 \
     -c:v libx264 -preset veryfast -pix_fmt yuv420p -profile:v high \
     -b:v 3500k -maxrate 3500k -bufsize 7000k -g $(( FPS * 2 )) -keyint_min $(( FPS * 2 )) -sc_threshold 0 \
     -c:a aac -b:a 128k -ar 44100 -f flv "$OUT" || true
