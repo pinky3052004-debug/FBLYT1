@@ -12,6 +12,18 @@ import time
 import requests
 
 API = "https://www.googleapis.com/youtube/v3"
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+TITLE = "\U0001F30D WORLD CUP FLAG BATTLE LIVE \U0001F534 | Who Will Win Today? \U0001F3C6 #shorts #youtubeshorts #viral"
+CATEGORY_ID = "20"  # Gaming
+
+
+def _read(name):
+    return open(os.path.join(HERE, name), encoding="utf-8").read()
+
+
+def tags():
+    return [t.strip() for t in _read("tags.txt").splitlines() if t.strip()]
 _tok = {"t": None, "exp": 0}
 
 
@@ -72,7 +84,7 @@ def ingest(stream_id):
 
 def create():
     now = datetime.datetime.utcnow()
-    title = f"\U0001F30D Country Flag Battle LIVE | Guess the winner - {now:%b %d}"
+    title, description = TITLE[:100], _read("description.txt")[:5000]
     stream = call("POST", "liveStreams", {"part": "snippet,cdn,contentDetails"}, {
         "snippet": {"title": title},
         "cdn": {"ingestionType": "rtmp", "resolution": "variable", "frameRate": "variable"},
@@ -82,7 +94,7 @@ def create():
     b = call("POST", "liveBroadcasts", {"part": "snippet,status,contentDetails"}, {
         "snippet": {
             "title": title,
-            "description": "Country flags battle inside the ring. Comment who you think will win!",
+            "description": description,
             "scheduledStartTime": start,
         },
         "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False},
@@ -99,6 +111,36 @@ def create():
     key, primary, backup = ingest(stream["id"])
     write_env(BROADCAST_ID=b["id"], CHAT_ID=b["snippet"].get("liveChatId", ""), STREAM_KEY=key, PRIMARY=primary, BACKUP=backup)
     print("broadcast:", b["id"], "https://youtube.com/watch?v=" + b["id"])
+    set_metadata(b["id"], title, description)
+    set_thumbnail(b["id"])
+
+
+def set_metadata(video_id, title, description):
+    """Tags and category live on the video resource, not the broadcast."""
+    try:
+        call("PUT", "videos", {"part": "snippet"}, {
+            "id": video_id,
+            "snippet": {"title": title, "description": description, "tags": tags(), "categoryId": CATEGORY_ID},
+        })
+        print("tags/category set")
+    except Exception as e:  # never stop the stream because of metadata
+        print("metadata failed:", e)
+
+
+def set_thumbnail(video_id):
+    path = os.path.join(ROOT, "thumbnail.jpg")
+    if not os.path.exists(path):
+        return
+    try:
+        r = requests.post(
+            "https://www.googleapis.com/upload/youtube/v3/thumbnails/set",
+            params={"videoId": video_id},
+            headers={"Authorization": "Bearer " + token(), "Content-Type": "image/jpeg"},
+            data=open(path, "rb").read(), timeout=60,
+        )
+        print("thumbnail:", r.status_code, "" if r.ok else r.text[:300])
+    except Exception as e:
+        print("thumbnail failed:", e)
 
 
 def find():
