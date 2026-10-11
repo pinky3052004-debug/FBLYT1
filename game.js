@@ -23,6 +23,69 @@ const nameOf = c => { try { return dn ? dn.of(c.toUpperCase()) : c.toUpperCase()
 const post = (u, b) => fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).catch(() => {});
 const saveState = r => post('/api/state', { round: r, winners, winnerNo });
 
+
+// ---------- audio (WebAudio, captured by the stream through a virtual sink) ----------
+let ac = null, master = null, lastBounce = 0, lastPop = 0;
+const MUSIC = params.get('music') !== '0', MUTED = params.get('mute') === '1';
+const PENTA = [0, 2, 4, 7, 9];
+const hz = n => 261.63 * Math.pow(2, n / 12);
+(function initAudio() {
+  if (MUTED) return;
+  try {
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    const comp = ac.createDynamicsCompressor();
+    master = ac.createGain(); master.gain.value = 0.7;
+    master.connect(comp); comp.connect(ac.destination);
+    const wake = () => { if (ac && ac.state !== 'running') ac.resume().catch(() => {}); };
+    ['pointerdown', 'keydown', 'touchstart'].forEach(e => addEventListener(e, wake, { passive: true }));
+    wake();
+  } catch (e) { ac = null; }
+})();
+function tone(f0, f1, dur, type, vol, when) {
+  if (!ac || ac.state !== 'running') return;
+  const t = ac.currentTime + (when || 0);
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(f0, t);
+  if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(master);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+function sfxBounce() {
+  if (!ac) return;
+  const t = ac.currentTime;
+  if (t - lastBounce < 0.08) return;
+  lastBounce = t;
+  const f = hz(PENTA[(Math.random() * 5) | 0] + (Math.random() < 0.5 ? 12 : 24));
+  tone(f * 1.25, f * 0.8, 0.14, 'sine', 0.16);          // rubbery "boing"
+}
+function sfxPop() {
+  if (!ac) return;
+  const t = ac.currentTime;
+  if (t - lastPop < 0.06) return;
+  lastPop = t;
+  tone(900, 140, 0.16, 'square', 0.07);
+  tone(1500, 400, 0.08, 'sine', 0.10);
+}
+function sfxWin() {
+  if (!ac) return;
+  [0, 4, 7, 12, 16, 19, 24].forEach((n, i) => tone(hz(n), hz(n), 0.45, 'triangle', 0.2, i * 0.11));
+  [12, 16, 19, 24].forEach(n => tone(hz(n), hz(n), 1.4, 'sine', 0.12, 0.8));
+  for (let i = 0; i < 10; i++) tone(2000 + Math.random() * 2500, 1000, 0.12, 'sine', 0.05, 0.9 + i * 0.09);
+}
+// light bouncy bass loop, 120 bpm
+const BASS = [0, 0, 7, 5, 0, 0, 9, 7], BASS2 = [4, 4, 11, 9, 4, 4, 12, 11];
+let beat = 0;
+if (MUSIC && !MUTED) setInterval(() => {
+  if (!ac || ac.state !== 'running' || mode === 'win') return;
+  const pat = (beat >> 3) % 2 ? BASS2 : BASS, n = pat[beat % 8] - 24;
+  tone(hz(n), hz(n) * 0.97, 0.2, 'triangle', 0.2);
+  if (beat % 2 === 0) tone(hz(n + 12), hz(n + 12), 0.09, 'sine', 0.04);
+  beat++;
+}, 250);
+
 // ---------- background (pre-rendered once) ----------
 const bg = document.createElement('canvas');
 bg.width = W; bg.height = H;
@@ -80,11 +143,11 @@ function newRound() {
 }
 
 function startWin() {
-  mode = 'win'; winT = performance.now(); flash = 1; shake = 30;
-  const w = flags.slice(0, 2);
-  w.forEach((f, i) => { f.sx = f.x; f.sy = f.y; f.sr = f.r; f.tx = CX + (i ? 100 : -100); f.ty = CY; f.tr = 78; f.i = i; });
-  winners = [{ c: w[0].c, no: winnerNo + 1 }, { c: w[1].c, no: winnerNo + 2 }];
-  winnerNo += 2;
+  mode = 'win'; winT = performance.now(); flash = 1; shake = 30; sfxWin();
+  const f = flags[0];
+  f.sx = f.x; f.sy = f.y; f.sr = f.r; f.tx = CX; f.ty = CY + 10; f.tr = 120; f.i = 0;
+  winnerNo += 1;
+  winners = winners.concat([{ c: f.c, no: winnerNo }]).slice(-2);
   for (let i = 0; i < 220; i++) confetti(CX, CY, true);
   saveState(round + 1);
 }
@@ -114,7 +177,7 @@ function step() {
         if (d > R + f.r * 0.4) f.out = true;
       } else {
         const nx = dx / d, ny = dy / d, dot = f.vx * nx + f.vy * ny;
-        if (dot > 0) { f.vx -= 2 * dot * nx; f.vy -= 2 * dot * ny; }
+        if (dot > 0) { f.vx -= 2 * dot * nx; f.vy -= 2 * dot * ny; sfxBounce(); }
         f.x = CX + nx * (R - f.r); f.y = CY + ny * (R - f.r);
       }
     }
@@ -142,13 +205,13 @@ function step() {
   const now = performance.now();
   for (const f of flags) {
     if (!f.out) continue;
-    if (remaining <= 2) { f.out = false; f.vx = -f.vx; f.vy = -f.vy; continue; }
+    if (remaining <= 1) { f.out = false; f.vx = -f.vx; f.vy = -f.vy; continue; }
     remaining--;
-    elim.push({ c: f.c, fx: f.x, fy: f.y, fr: f.r, t: now });
+    elim.push({ c: f.c, fx: f.x, fy: f.y, fr: f.r, t: now }); sfxPop();
     pulses.push({ x: f.x, y: f.y, t: now });
   }
   flags = flags.filter(f => !f.out);
-  if (flags.length <= 2 && mode === 'play') startWin();
+  if (flags.length <= 1 && mode === 'play') startWin();
 }
 
 function updateFx(k, now) {
@@ -248,7 +311,7 @@ function drawWin(now) {
   }
   drawRing(true);
   const p = Math.min(1, t / 1.2), e = 1 - Math.pow(1 - p, 3);
-  for (const f of flags.slice(0, 2)) {
+  for (const f of flags.slice(0, 1)) {
     const x = f.sx + (f.tx - f.sx) * e;
     const y = f.sy + (f.ty - f.sy) * e + (p >= 1 ? Math.sin(t * 3 + f.i) * 7 : 0);
     const r = f.sr + (f.tr - f.sr) * e;
@@ -257,15 +320,15 @@ function drawWin(now) {
     drawFlag(f.c, x, y, r, 6);
     ctx.font = Math.round(r * 0.9) + 'px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
     ctx.fillText('\u{1F451}', x, y - r - 8);
-    ctx.font = 'bold 28px Arial'; ctx.fillStyle = '#fff';
+    ctx.font = 'bold 36px Arial'; ctx.fillStyle = '#fff';
     ctx.shadowColor = 'rgba(0,0,0,.6)'; ctx.shadowBlur = 6;
-    ctx.fillText(nameOf(f.c), x, y + r + 40, 250); ctx.shadowBlur = 0;
+    ctx.fillText(nameOf(f.c), x, y + r + 50, 420); ctx.shadowBlur = 0;
   }
   const s = 1 + Math.sin(t * 6) * 0.06;
-  ctx.save(); ctx.translate(CX, CY - 200); ctx.scale(s, s);
-  ctx.font = 'bold 84px Arial'; ctx.textAlign = 'center';
-  ctx.lineWidth = 12; ctx.strokeStyle = '#8a5a00'; ctx.strokeText('WINNERS!', 0, 0);
-  ctx.fillStyle = '#ffe27a'; ctx.fillText('WINNERS!', 0, 0);
+  ctx.save(); ctx.translate(CX, CY - 230); ctx.scale(s, s);
+  ctx.font = 'bold 96px Arial'; ctx.textAlign = 'center';
+  ctx.lineWidth = 12; ctx.strokeStyle = '#8a5a00'; ctx.strokeText('WINNER!', 0, 0);
+  ctx.fillStyle = '#ffe27a'; ctx.fillText('WINNER!', 0, 0);
   ctx.restore();
 }
 
@@ -333,6 +396,6 @@ async function boot() {
   requestAnimationFrame(loop);
 }
 
-window.__game = { get flags() { return flags; }, get mode() { return mode; }, get round() { return round; } };
+window.__game = { get audio() { return ac ? ac.state : 'off'; }, get flags() { return flags; }, get mode() { return mode; }, get round() { return round; } };
 boot();
 })();
